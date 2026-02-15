@@ -137,6 +137,21 @@ export async function resolveGatewayRuntimeConfig(params: {
     }
   }
 
+  const trustedProxies = params.cfg.gateway?.trustedProxies ?? [];
+
+  if (authMode === "trusted-proxy") {
+    if (isLoopbackHost(bindHost)) {
+      throw new Error(
+        "gateway auth mode=trusted-proxy makes no sense with bind=loopback; use bind=lan or bind=custom with gateway.trustedProxies configured",
+      );
+    }
+    if (trustedProxies.length === 0) {
+      throw new Error(
+        "gateway auth mode=trusted-proxy requires gateway.trustedProxies to be configured with at least one proxy IP",
+      );
+    }
+  }
+
   // SECURITY: Warn when binding to external interfaces even with auth
   // Issue #1971: ~900+ exposed instances detected on Shodan
   if (!isLoopbackHost(bindHost) && hasSharedSecret) {
@@ -146,8 +161,8 @@ export async function resolveGatewayRuntimeConfig(params: {
     if (isWeakToken || isWeakPassword) {
       throw new Error(
         `SECURITY: Gateway binding to ${bindHost}:${params.port} requires strong auth. ` +
-        `Token must be >=32 chars, password >=12 chars. ` +
-        `This check protects against brute force attacks on exposed gateways.`
+          `Token must be >=32 chars, password >=12 chars. ` +
+          `This check protects against brute force attacks on exposed gateways.`,
       );
     }
 
@@ -160,7 +175,7 @@ export async function resolveGatewayRuntimeConfig(params: {
    - Consider using Cloudflare Tunnel or Tailscale instead of direct exposure
    - See: https://github.com/openclaw/openclaw/blob/main/docs/security.md
 
-   Detected ${900}+ exposed OpenClaw instances on Shodan. Don't be one of them.
+   Detected 900+ exposed OpenClaw instances on Shodan. Don't be one of them.
     `);
   }
 

@@ -1,7 +1,9 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { randomBytes } from "node:crypto";
 import type { GatewayAuthConfig, GatewayTailscaleMode } from "../config/config.js";
+import type { GatewayTrustedProxyConfig } from "../config/config.js";
 import { readTailscaleWhoisIdentity, type TailscaleWhoisIdentity } from "../infra/tailscale.js";
+import { safeEqualSecret } from "../security/secret-equal.js";
 import { isTrustedProxyAddress, parseForwardedForClientIp, resolveGatewayClientIp } from "./net.js";
 
 /**
@@ -18,39 +20,40 @@ export function generateSecureGatewayToken(): string {
  * - Not a common weak/default token
  */
 export function isTokenSecure(token: string): boolean {
-  if (token.length < 32) return false;
+  if (token.length < 32) {
+    return false;
+  }
 
   // Block common weak patterns
-  const weakPatterns = [
-    "password",
-    "123456",
-    "secret",
-    "admin",
-    "token",
-    "default",
-    "changeme",
-  ];
+  const weakPatterns = ["password", "123456", "secret", "admin", "token", "default", "changeme"];
   const lowerToken = token.toLowerCase();
   for (const pattern of weakPatterns) {
-    if (lowerToken.includes(pattern)) return false;
+    if (lowerToken.includes(pattern)) {
+      return false;
+    }
   }
 
   return true;
 }
-export type ResolvedGatewayAuthMode = "token" | "password";
+export type ResolvedGatewayAuthMode = "none" | "token" | "password" | "trusted-proxy";
 
 export type ResolvedGatewayAuth = {
   mode: ResolvedGatewayAuthMode;
   token?: string;
   password?: string;
   allowTailscale: boolean;
+  trustedProxy?: GatewayTrustedProxyConfig;
 };
 
 export type GatewayAuthResult = {
   ok: boolean;
-  method?: "token" | "password" | "tailscale" | "device-token";
+  method?: "none" | "token" | "password" | "tailscale" | "device-token" | "trusted-proxy";
   user?: string;
   reason?: string;
+  /** Present when the request was blocked by the rate limiter. */
+  rateLimited?: boolean;
+  /** Milliseconds the client should wait before retrying (when rate-limited). */
+  retryAfterMs?: number;
 };
 
 type ConnectAuth = {
@@ -65,13 +68,6 @@ type TailscaleUser = {
 };
 
 type TailscaleWhoisLookup = (ip: string) => Promise<TailscaleWhoisIdentity | null>;
-
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
 
 function normalizeLogin(login: string): string {
   return login.trim().toLowerCase();
@@ -301,7 +297,7 @@ export async function authorizeGatewayConnect(params: {
     if (!connectAuth?.token) {
       return { ok: false, reason: "token_missing" };
     }
-    if (!safeEqual(connectAuth.token, auth.token)) {
+    if (!safeEqualSecret(connectAuth.token, auth.token)) {
       return { ok: false, reason: "token_mismatch" };
     }
     return { ok: true, method: "token" };
@@ -315,7 +311,7 @@ export async function authorizeGatewayConnect(params: {
     if (!password) {
       return { ok: false, reason: "password_missing" };
     }
-    if (!safeEqual(password, auth.password)) {
+    if (!safeEqualSecret(password, auth.password)) {
       return { ok: false, reason: "password_mismatch" };
     }
     return { ok: true, method: "password" };
